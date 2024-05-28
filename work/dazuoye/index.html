@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Coursework template</title>
+        <meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+        <link rel="shortcut icon" href="../favicon.ico">
+    </head>   
+    <body>        
+        <script type="text/javascript" src="../js/three.js"></script>
+        <script type="text/javascript" src="../js/stats.min.js"></script>
+        <script type="text/javascript" src="../js/dat.gui.js"></script>
+        <script type="text/javascript" src="../js/keyboardstate.js"></script>
+        
+        <div id="Stats-output"></div>
+        
+        <!-- Div which will hold the Output -->
+        <div id="WebGL-output"></div>
+        <script>
+            var truckCollisionDistance = 3.6;   // How many units away the player can get from the wall
+            var aigroupCollisionDistance = 7;
+            var aigroup;
+            var sceneWidth;
+            var sceneHeight;
+            var camera;
+            var scene;
+            var renderer;
+            var dom;
+            var sun;
+            var mapGround;
+            var rollingSpeed=0.008;
+            var wheelRollingSpeed;
+            var wheelBasePosY=0.07;
+            var bounceValue=0.1;
+            
+            var stats;
+            var keyboard = new THREEx.KeyboardState();
+      
+            var vehicle;
+            var box;
+            var frontRightWheel;
+            var frontLeftWheel;
+            var rearRightWheel;
+            var rearLeftWheel;
+            var leftHeadlight;
+            var rightHeadlight;
+            var mainLeftHeadlight;
+            var mainRightHeadlight;
+            var leftBreaklight;
+            var rightBreaklight;
+
+            var hemisphereLight;
+            
+            // skybox
+            var prefix;
+            var dir;
+            var suffix;
+            var skyGeom;	
+            var matArray;
+            var skyMat;
+            var skyBox;
+            
+            var spotLight;       
+            var truck;
+            var truckColour;
+            var group;           
+            var buildingWidth = 3;                 // width of buildings in the town
+            var buildingHeight = 3;                // height of buildings in the town
+            var mapSize;
+            var collidingObjects = [];
+
+            var totalCubesWide;
+            
+            // direction the player's truck is moving
+            var moveForward = false;
+            var moveBackward = false;
+            var moveLeft = false;
+            var moveRight = false;
+
+            // weather
+            var snowParticleSystem, rainParticleSystem, particleCount, particles;
+            var snow = false, rain = false;
+
+            init();
+
+            function init() {
+                // set up the scene
+                createScene();
+                // call game loop
+                update();
+            }
+
+            function createScene(){
+                wheelRollingSpeed=(rollingSpeed*26/0.2)/5;
+                sceneWidth=window.innerWidth;
+                sceneHeight=window.innerHeight;
+                scene = new THREE.Scene();
+                scene.fog = new THREE.FogExp2( 0xfffafa, 0.005 );
+                camera = new THREE.PerspectiveCamera(60, sceneWidth / sceneHeight, 0.1, 1000);
+                renderer = new THREE.WebGLRenderer({alpha:true}); // transparent background
+                renderer.setClearColor(0xfffafa, 1); 
+                renderer.shadowMap.enabled = true; // enable shadows
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                renderer.setSize(sceneWidth, sceneHeight);
+                dom = document.getElementById('WebGL-output');
+                dom.appendChild(renderer.domElement);
+                stats = initStats();
+                createTownBuildings();
+                addWorld();
+                // add walls that surround the town
+                addTownWalls();
+	
+                addLight();
+                
+                camera.position.z = 6.5; // 6.5
+                camera.position.y = 3.2; // 2.5 or 3.2
+                
+                window.addEventListener('resize', onWindowResize, false); // resize callback
+  
+                var infoText = document.createElement('div');
+                infoText.style.position = 'absolute';
+                infoText.style.width = 100;
+                infoText.style.height = 100;
+                infoText.style.backgroundColor = "grey";
+                infoText.innerHTML = "WASD - Move <br /> R - Night <br />F - Day";
+                infoText.style.top = 10 + 'px';
+                infoText.style.left = 10 + 'px';
+                document.body.appendChild(infoText);
+    
+                // skybox
+                prefix = "images/iceflats_";
+                dir  = ["ft", "bk", "up", "dn", "rt", "lf"];
+                suffix = ".png";
+                skyGeom = new THREE.CubeGeometry( 500, 500, 500 );	
+                matArray = [];
+                for (var i = 0; i < 6; i++)
+                    matArray.push( new THREE.MeshBasicMaterial({
+                        map: THREE.ImageUtils.loadTexture( prefix + dir[i] + suffix ),
+                        side: THREE.BackSide
+                    }));
+                skyMat = new THREE.MeshFaceMaterial( matArray );
+                skyBox = new THREE.Mesh( skyGeom, skyMat );
+                this.scene.add( skyBox );
+    
+                addVehicle();
+                addTruck();   
+    
+                // scene gui
+                var params = {
+                    Color: "#8070DC",
+                    HeadLights: 0.5,
+                    Snow: false,
+                    Rain: false,
+                    Streetlights: 0.5
+                };
+
+                var gui = new dat.GUI();
+                var folder = gui.addFolder('Truck');
+                folder.addColor(params, 'Color')
+                        .name('Color')
+                        .onChange(function() {
+                            truckColour.color.set(params.Color);
+                });
+                folder.add(params, 'HeadLights', 0, 5).onChange(function() {
+                    //init();
+                    mainLeftHeadlight.intensity = params.HeadLights,
+                    mainRightHeadlight.intensity = params.HeadLights;
+                });
+                folder.open();
+                var folder2 = gui.addFolder('Weather');
+                folder2.add(params, 'Snow').onChange(function() {
+                    if (params.Snow === true) {
+                        scene.add(snowParticleSystem);
+                        snow = true;
+                        //addWeather();
+                    }
+                    else {
+                        scene.remove(snowParticleSystem);
+                        snow = false; 
+                    }
+            
+                });
+                folder2.add(params, 'Rain').onChange(function() {
+                    if (params.Rain === true) {
+                        scene.add(rainParticleSystem);
+                        rain = true;
+                        //addWeather();
+                    }
+                    else {
+                        scene.remove(rainParticleSystem);
+                        rain = false;
+                    }
+            
+                });
+                folder2.open();
+                var folder3 = gui.addFolder('Streetlights');
+                folder3.add(params, 'Streetlights', 0, 5).onChange(function() {
+                    spotLight.intensity = params.Streetlights;
+                });
+                folder3.open();
+                 // highstreet road shape
+                const outerShape = new THREE.Shape();
+
+                outerShape.moveTo(150, 50);
+                outerShape.lineTo(150, 150);
+                outerShape.quadraticCurveTo(150, 175, 100, 175);
+                outerShape.quadraticCurveTo(50, 175, 50, 150);
+                outerShape.lineTo(50, 50);
+                outerShape.quadraticCurveTo(50, 25, 100, 25);
+                outerShape.quadraticCurveTo(150, 25, 150, 50);
+
+                const innerShape = new THREE.Path();
+
+                innerShape.moveTo(140, 40);
+                innerShape.lineTo(140, 140);
+                innerShape.quadraticCurveTo(140, 165, 90, 165);
+                innerShape.quadraticCurveTo(60, 165, 60, 140);
+                innerShape.lineTo(60, 50);
+                innerShape.quadraticCurveTo(60, 35, 110, 35);
+                innerShape.quadraticCurveTo(140, 35, 140, 60);
+
+                outerShape.holes.push(innerShape);
+    
+                var roadMarkings = THREE.ImageUtils.loadTexture("images/stripe.jpg");
+                roadMarkings.wrapS = roadMarkings.wrapT = THREE.RepeatWrapping;
+                roadMarkings.magFilter = THREE.NearestFilter;
+                roadMarkings.repeat.set( 0.1, 0.1 );
+    
+                var highStreet = new THREE.Mesh(
+                        new THREE.ShapeGeometry(outerShape),
+                new THREE.MeshPhongMaterial({map: roadMarkings}));
+                highStreet.position = mapGround.position;
+                highStreet.position.y = 0.01;
+                highStreet.position.x = -63.5;
+                highStreet.position.z = 42.5;
+                //highStreet.position.y = 0;
+                //highStreet.scale.set(10,10,10);
+                highStreet.scale.x = 0.63;
+                highStreet.scale.y = 0.43;
+                highStreet.rotateX(-Math.PI * 0.5);
+    
+    
+                scene.add(highStreet);
+    
+                // from direction of car
+                treeTopLeft = addPerimTree();
+                treeTopLeft.position.set(-32.2, 0.7, -32.2);
+                scene.add(treeTopLeft);
+                treeTopRight = addPerimTree();
+                treeTopRight.position.set(31.6, 0.7, -32.2);
+                scene.add(treeTopRight);
+                treeBackLeft = addPerimTree();
+                treeBackLeft.position.set(-32.2, 0.7, 31.6);
+                scene.add(treeBackLeft);
+    
+                treeBackRight = addPerimTree();
+                treeBackRight.position.set(31.6, 0.7, 31.6);
+                scene.add(treeBackRight);
+                // add trees to collision array
+                collidingObjects.push(treeTopLeft);
+                collidingObjects.push(treeTopRight);
+                collidingObjects.push(treeBackLeft);
+                collidingObjects.push(treeBackRight);
+    
+                // add streetlights to map here
+                var streetlightTopLeft = addStreetLight();
+                streetlightTopLeft.position.set(-32.2,1, -29.2);
+                scene.add(streetlightTopLeft);
+                var streetlightTopRight = addStreetLight();
+                streetlightTopRight.position.set(31.6, 1, -29.2);
+                scene.add(streetlightTopRight);
+    
+                addWeather();
+                render();
+            }
+            
+            function updateCamera(){
+                this.camera.lookAt(this.group.position);
+                var angle = 0;
+                // reset all wheel rotation
+        
+                frontRightWheel.rotation.x = 0;
+                frontLeftWheel.rotation.x = 0;
+                rearLeftWheel.rotation.x = 0;
+                rearRightWheel.rotation.x = 0;
+       
+                //if (detectPlayerCollision() == false) {
+                // move forwards/backwards/left/right with keyboard
+                if ( keyboard.pressed("W") ) {
+                    group.translateZ( -0.1 );
+                    moveForward = true;
+                    moveBackward = false;
+                    moveLeft = false;
+                    moveRight = false;
+       
+                    // make wheels roll forward.
+                    frontRightWheel.rotation.x -= wheelRollingSpeed;
+                    rearRightWheel.rotation.x -= wheelRollingSpeed;
+                    frontLeftWheel.rotation.x -= wheelRollingSpeed;
+                    rearLeftWheel.rotation.x -= wheelRollingSpeed;
+        
+                    //vehicleSuspension();
+        
+                }
+                if ( keyboard.pressed("S") ) { // reverse
+                    group.translateZ(  0.1 );
+                    moveForward = false;
+                    moveBackward = true;
+                    moveLeft = false;
+                    moveRight = false;
+       
+                    // reset all wheel rotation
+                    /*frontRightWheel.rotation.x = 0;
+                      frontLeftWheel.rotation.x = 0;
+                      rearLeftWheel.rotation.x = 0;
+                      rearRightWheel.rotation.x = 0;*/
+                    // make wheels roll backwards.
+                    frontRightWheel.rotation.x += wheelRollingSpeed;
+                    rearRightWheel.rotation.x += wheelRollingSpeed;
+                    frontLeftWheel.rotation.x += wheelRollingSpeed;
+                    rearLeftWheel.rotation.x += wheelRollingSpeed;
+                    //vehicleSuspension();
+                }
+    
+                // rotate left/right/up/down
+                var rotation_matrix = new THREE.Matrix4().identity();
+                if ( keyboard.pressed("A") ) {
+                    //group.rotateOnAxis( new THREE.Vector3(0,1,0), rotateAngle);
+                    moveForward = false;
+                    moveBackward = false;
+                    moveLeft = true;
+                    moveRight = false;
+                    group.rotation.y +=0.04;
+                    //camera.rotation.y +=0.1;
+                    angle += 0.1;
+                    frontRightWheel.rotation.y = -1;
+                    frontLeftWheel.rotation.y = -1;
+                } else {
+                    frontRightWheel.rotation.y = 1.55;
+                    frontLeftWheel.rotation.y = 1.55;
+                }
+                if ( keyboard.pressed("D") ) {
+                    moveForward = false;
+                    moveBackward = false;
+                    moveLeft = false;
+                    moveRight = true;
+                    group.rotation.y -=0.04;
+                    //camera.rotation.y -=0.1;
+                    angle -= 0.1; 
+                    frontRightWheel.rotation.y = 1;
+                    frontLeftWheel.rotation.y = 1;
+                } 
+                //} else {
+                //  group.translateZ(0);
+                //  group.translateX(0);
+                //  console.log("hit");
+                //}
+       
+                if ( keyboard.pressed("R") ) {
+                    // skybox
+                    prefix = "images/frozen_";
+                    dir  = ["ft", "bk", "up", "dn", "rt", "lf"];
+                    suffix = ".png";
+                    skyGeom = new THREE.BoxGeometry( 500, 500, 500 );	
+                    matArray = [];
+                    for (var i = 0; i < 6; i++)
+                        matArray.push( new THREE.MeshBasicMaterial({
+                            map: THREE.ImageUtils.loadTexture( prefix + dir[i] + suffix ),
+                            side: THREE.BackSide
+                        }));
+                    skyMat = new THREE.MeshFaceMaterial( matArray );
+                    skyBox = new THREE.Mesh( skyGeom, skyMat );
+                    scene.add(skyBox);
+        
+                    // remove light
+                    scene.remove(hemisphereLight);
+                    scene.fog = new THREE.FogExp2( 0x0000, 0.004 );
+                    
+        
+                    // turn on player vehicle headights
+                    mainLeftHeadlight.color.setHex( 0xfcfab3 );
+                    mainRightHeadlight.color.setHex( 0xfcfab3 );
+                  
+                }
+       
+	
+                if ( keyboard.pressed("F") ) { // day
+	
+                    // skybox
+                    prefix = "images/iceflats_";
+                    dir  = ["ft", "bk", "up", "dn", "rt", "lf"];
+                    suffix = ".png";
+                    skyGeom = new THREE.BoxGeometry( 500, 500, 500 );	
+                    matArray = [];
+                    for (var i = 0; i < 6; i++)
+                        matArray.push( new THREE.MeshBasicMaterial({
+                            map: THREE.ImageUtils.loadTexture( prefix + dir[i] + suffix ),
+                            side: THREE.BackSide
+                        }));
+                    skyMat = new THREE.MeshFaceMaterial( matArray );
+                    skyBox = new THREE.Mesh( skyGeom, skyMat );
+                    this.scene.add( skyBox );
+                    scene.add(hemisphereLight);
+                    scene.fog = new THREE.FogExp2( 0xfffafa, 0.005 );
+                }
+	
+                if ( keyboard.pressed("Z") )
+                {
+                    group.position.set(0,25.1,0); // reset vehicle position
+                    group.rotation.set(0,0,0);
+                }
+                
+                // set camera to stay behind the player's vehicle
+                var relativeCameraOffset = new THREE.Vector3(0,2,7);
+
+                var cameraOffset = relativeCameraOffset.applyMatrix4( group.matrixWorld );
+    
+                camera.position.x = cameraOffset.x;
+                camera.position.y = cameraOffset.y;
+                camera.position.z = cameraOffset.z;
+                camera.lookAt(group.position);
+	
+                // collision
+                var originPoint = truck.position.clone();
+	
+                for (var vertexIndex = 0; vertexIndex < truck.geometry.vertices.length; vertexIndex++)
+                {		
+                    var localVertex = truck.geometry.vertices[vertexIndex].clone();
+                    var globalVertex = localVertex.applyMatrix4(truck.matrix);
+                    var dirVector = globalVertex.sub(truck.position);
+		
+                    var ray = new THREE.Raycaster(originPoint, dirVector.clone().normalize());
+                    var collisionResults = ray.intersectObjects(collidingObjects);
+                    if (collisionResults.length > 0 && collisionResults[0].distance < dirVector.length()) {
+                        // group.translateZ(0);
+                        // group.translateX(0);
+                        console.log("hit");
+                    }
+			
+                }
+
+            }
+            
+            //  Determine if the player is colliding with a collidable object
+            function detectPlayerCollision() {
+    
+                var originPoint = truck.position.clone();
+	
+                for (var vertexIndex = 0; vertexIndex < truck.geometry.vertices.length; vertexIndex++)
+                {		
+                    var localVertex = truck.geometry.vertices[vertexIndex].clone();
+                    var globalVertex = localVertex.applyMatrix4(truck.matrix);
+                    var dirVector = globalVertex.sub(truck.position);
+		
+                    var ray = new THREE.Raycaster(originPoint, dirVector.clone().normalize());
+                    var collisionResults = ray.intersectObjects(collidingObjects);
+                    if (collisionResults.length > 0 && collisionResults[0].distance < dirVector.length()) 
+                        return true;
+                    else
+                        return false;
+                }
+            }
+            function rayIntersect(ray, dist) {
+                var intersects = ray.intersectObjects(collidingObjects);
+                for (var i = 0; i < intersects.length; i++) {
+                    if (intersects[i].distance < dist) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            
+            // rain and snow
+            function addWeather() {
+                addSnow();
+                addRain();
+            }
+            
+            function addRain() {
+                var loader = new THREE.TextureLoader();
+                particleCount = 13999;
+                var pMaterial = new THREE.PointsMaterial({
+                    color: 0xFFFFFF,
+                    size: 0.8,
+                    map: loader.load(
+                            "images/raindrop.png"
+                            ),
+                    blending: THREE.AdditiveBlending,
+                    depthTest: false,
+                    transparent: true
+                });
+
+                particles = new THREE.Geometry;
+                for (var i = 0; i < particleCount; i++) {
+                    var pX = Math.random()*500 - 250,
+                            pY = Math.random()*500 - 250,
+                            pZ = Math.random()*500 - 250,
+                            particle = new THREE.Vector3(pX, pY, pZ);
+                    particle.velocity = {};
+                    particle.velocity.y = 0;
+                    particles.vertices.push(particle);
+                }
+                rainParticleSystem = new THREE.Points(particles, pMaterial);
+    
+            }
+            
+            function addSnow() {
+                var loader = new THREE.TextureLoader();
+                particleCount = 13999;
+                var pMaterial = new THREE.PointsMaterial({
+                    color: 0xFFFFFF,
+                    size: 0.8,
+                    map: loader.load(
+                            "images/snow.png"
+                            ),
+                    blending: THREE.AdditiveBlending,
+                    depthTest: false,
+                    transparent: true
+                });
+
+                particles = new THREE.Geometry;
+                for (var i = 0; i < particleCount; i++) {
+                    var pX = Math.random()*500 - 250,
+                            pY = Math.random()*500 - 250,
+                            pZ = Math.random()*500 - 250,
+                            particle = new THREE.Vector3(pX, pY, pZ);
+                    particle.velocity = {};
+                    particle.velocity.y = 0;
+                    particles.vertices.push(particle);
+                }
+                snowParticleSystem = new THREE.Points(particles, pMaterial);
+    
+            }
+            
+            function simulateWeather() {
+                var partCount = particleCount;
+                while (partCount--) {
+                    var particle = particles.vertices[partCount];
+                    if (particle.y < -200) {
+                        particle.y = 200;
+                        particle.velocity.y = 0;
+                    }
+                    particle.velocity.y -= Math.random() * .02;
+                    particle.y += particle.velocity.y;
+                }
+                particles.verticesNeedUpdate = true;
+                
+            };
+            
+            // player vehicle
+            function addTruck() {
+                var geom = new THREE.Geometry();
+                truckColour = new THREE.MeshPhongMaterial({
+                    color: 0x8070DC
+                });
+                var truckBody_Main = new THREE.Mesh(new THREE.CubeGeometry(30, 28, 35, 1, 1, 1), truckColour);
+                truckBody_Main.position.y = -1;
+                truckBody_Main.position.z = 4.8;
+                truckBody_Main.position.x = 0;
+                truckBody_Main.updateMatrix();
+                geom.merge(truckBody_Main.geometry, truckBody_Main.matrix);
+    
+                var truckBody_Front = new THREE.Mesh(new THREE.CubeGeometry(25, 15, 35, 1, 1, 1), truckColour);
+    
+                truckBody_Front.position.x = 0.2;
+                truckBody_Front.position.y = -8;
+                truckBody_Front.position.z = -20.5;
+                truckBody_Front.updateMatrix();
+                geom.merge(truckBody_Front.geometry, truckBody_Front.matrix);
+    
+                var truckBody_Rear = new THREE.Mesh(new THREE.CubeGeometry(25, 15, 35, 1, 1, 1),truckColour);
+    
+                truckBody_Rear.position.x = 0.2;
+                truckBody_Rear.position.y = -8;
+                truckBody_Rear.position.z = 14.5;
+                truckBody_Rear.updateMatrix();
+                geom.merge(truckBody_Rear.geometry, truckBody_Rear.matrix);
+    
+                truck = new THREE.Mesh(geom, truckColour, 0.1, 10);
+    
+                // lights
+                // break lights
+                var cube = new THREE.BoxBufferGeometry(6, 4, 4);
+                // left
+                leftBreaklight = new THREE.PointLight(0xfd0303, 2, 2);
+                leftBreaklight.add(new THREE.Mesh(cube, new THREE.MeshBasicMaterial({color: 0xfd0303})));
+                //leftBreaklight.scale.set(0.015,0.015,0.015);
+                leftBreaklight.position.y = -10;
+                leftBreaklight.position.x = -10;
+                leftBreaklight.position.z = 31;
+                leftBreaklight.intensity = 0.5;
+                truck.add(leftBreaklight);
+                // right
+                rightBreaklight = new THREE.PointLight(0xfd0303, 2, 2);
+                rightBreaklight.add(new THREE.Mesh(cube, new THREE.MeshBasicMaterial({color: 0xfd0303})));
+                //rightBreaklight.scale.set(0.015,0.015,0.015);
+                rightBreaklight.position.y = -10;
+                rightBreaklight.position.x = 10;
+                rightBreaklight.position.z = 31;
+                rightBreaklight.intensity = 0.5;
+                truck.add(rightBreaklight);
+    
+                // headlights
+                var sphere = new THREE.SphereBufferGeometry(0.5, 16, 8);
+    
+                leftHeadlight = new THREE.PointLight(0xfcfab3, 2, 10);
+                leftHeadlight.add(new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({color: 0xfcfab3})));
+                //leftHeadlight.scale.set(0.06,0.06,0.06);
+                leftHeadlight.position.y = -15;
+                leftHeadlight.position.x = -10;
+                leftHeadlight.position.z = -40;
+                leftHeadlight.intensity = 0.1;
+                truck.add(leftHeadlight);
+    
+                rightHeadlight = new THREE.PointLight(0xfcfab3, 2, 10);
+                rightHeadlight.add(new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({color: 0xfcfab3})));
+                //rightHeadlight.scale.set(0.06,0.06,0.06);
+                rightHeadlight.position.y = -15;
+                rightHeadlight.position.x = 10;
+                rightHeadlight.position.z = -40;
+                rightHeadlight.intensity = 0.1;
+                truck.add(rightHeadlight);
+    
+                // main headlights
+                // left
+                mainLeftHeadlight = new THREE.PointLight(0xf9e9bf, 2, 2);
+                mainLeftHeadlight.add(new THREE.Mesh(cube, new THREE.MeshBasicMaterial({color: 0xf9e9bf})));
+                //leftBreaklight.scale.set(0.015,0.015,0.015);
+                mainLeftHeadlight.position.y = -10;
+                mainLeftHeadlight.position.x = -10;
+                mainLeftHeadlight.position.z = -37;
+                mainLeftHeadlight.intensity = 0.5;
+                truck.add(mainLeftHeadlight);
+                // right
+                mainRightHeadlight = new THREE.PointLight(0xf9e9bf, 2, 2);
+                mainRightHeadlight.add(new THREE.Mesh(cube, new THREE.MeshBasicMaterial({color: 0xf9e9bf})));
+                //rightBreaklight.scale.set(0.015,0.015,0.015);
+                mainRightHeadlight.position.y = -10;
+                mainRightHeadlight.position.x = 10;
+                mainRightHeadlight.position.z = -37;
+                mainRightHeadlight.intensity = 0.5;
+                truck.add(mainRightHeadlight);
+    
+                // create group for player truck here
+                group = new THREE.Group();
+    
+                // wheels
+                //texture
+                var wheelTexture = new THREE.TextureLoader().load( "images/tyre.png" );
+                frontLeftWheel = new THREE.Mesh(new THREE.TorusGeometry (2, 1, 28, 18),
+                new THREE.MeshLambertMaterial({
+                    map: wheelTexture
+                }));
+                
+                frontLeftWheel.position.y = wheelBasePosY;
+                frontLeftWheel.position.x = -0.14;
+                frontLeftWheel.position.z = 4.6;
+    
+                //scene.add(frontLeftWheel);
+                group.add(frontLeftWheel);
+                frontLeftWheel.scale.set(0.035,0.035,0.035);
+                frontLeftWheel.rotateY(-Math.PI * 0.5);
+    
+                frontRightWheel = new THREE.Mesh(new THREE.TorusGeometry(2, 1, 28, 18),
+                new THREE.MeshLambertMaterial({
+                    map: wheelTexture
+                }));
+                
+                // position and attach wheel to vehicle body
+                frontRightWheel.position.y = wheelBasePosY;
+                frontRightWheel.position.x = 0.14;
+                frontRightWheel.position.z = 4.6;
+                //scene.add(frontRightWheel);
+                group.add(frontRightWheel);
+                frontRightWheel.scale.set(0.035,0.035,0.035);
+                frontRightWheel.rotateY(-Math.PI * 0.5); // rotate 90 degrees on the Y axis
+    
+                rearRightWheel = new THREE.Mesh(new THREE.TorusGeometry(2, 1, 28, 18),
+                new THREE.MeshLambertMaterial({
+                    map: wheelTexture
+                })); //color: 0xffffff
+                // position and attach wheel to vehicle body
+                rearRightWheel.position.y = wheelBasePosY;
+                rearRightWheel.position.x = 0.14;
+                rearRightWheel.position.z = 5;
+                //scene.add(rearRightWheel);
+                group.add(rearRightWheel);
+                rearRightWheel.scale.set(0.035,0.035,0.035);
+                rearRightWheel.rotateY(-Math.PI * 0.5); // rotate 90 degrees on the Y axis
+    
+    
+                rearLeftWheel = new THREE.Mesh(new THREE.TorusGeometry(2, 1, 28, 18),
+                new THREE.MeshLambertMaterial({
+                    map: wheelTexture
+                }));
+                // position and attach wheel to vehicle body
+                rearLeftWheel.position.y = wheelBasePosY;
+                rearLeftWheel.position.x = -0.14;
+                rearLeftWheel.position.z = 5;
+
+                rearLeftWheel.scale.set(0.035,0.035,0.035);
+                rearLeftWheel.rotateY(-Math.PI * 0.5);
+                //scene.add(rearLeftWheel);
+                group.add(rearLeftWheel);
+                truck.position.y = wheelBasePosY+0.18;//
+                //truck.position.y = 10;//
+                truck.position.x = 0;
+                truck.position.z = 4.8;
+                truck.castShadow=true;
+                //truck.rotateY(-Math.PI * 0.5); 
+                truck.scale.set(0.011,0.011,0.011);
+                //scene.add(truck);
+                group.add(truck);
+                scene.add(group);
+    
+            }
+
+            function addVehicle() {
+                var geom = new THREE.Geometry();
+                aigroup = new THREE.Group();
+                box = new THREE.Mesh(new THREE.BoxGeometry(18, 10, 10), new THREE.MeshBasicMaterial({
+                    color: 0x303030
+                }));
+                box.position.y = wheelBasePosY+0.15;
+                box.position.z = 4.8;
+                box.position.x = 0;
+                //aigroup.add(box);
+                box.scale.set(0.03,0.03,0.03);
+                box.rotateY(-Math.PI * 0.5); // rotate 90 degrees on the Y axis
+                box.updateMatrix();
+                geom.merge(box.geometry, box.matrix);
+    
+                // texture
+                var wheelTexture = new THREE.TextureLoader().load( "images/tyre.png" );
+                frontLeftWheel = new THREE.Mesh(new THREE.TorusGeometry(2, 1, 12, 18),
+                new THREE.MeshLambertMaterial({
+                    color: 0xff5238
+                }));
+                frontLeftWheel.position.y = wheelBasePosY;
+                frontLeftWheel.position.x = 0.35-0.5;
+                frontLeftWheel.position.z = 4.6;
+                //aigroup.add(frontLeftWheel);
+                frontLeftWheel.scale.set(0.04,0.04,0.04);
+                frontLeftWheel.rotateY(-Math.PI * 0.5);
+                // torus.scale.set(0.2,0.2,0.2);
+                frontLeftWheel.updateMatrix();
+                geom.merge(frontLeftWheel.geometry, frontLeftWheel.matrix);
+
+    
+                frontRightWheel = new THREE.Mesh(new THREE.TorusGeometry(2, 1, 12, 18),
+                new THREE.MeshLambertMaterial({
+                    map: wheelTexture
+                }));
+                // position and attach wheel to vehicle body
+                frontRightWheel.position.y = wheelBasePosY;
+                frontRightWheel.position.x = 0.65-0.5;
+                frontRightWheel.position.z = 4.6;
+                //aigroup.add(frontRightWheel);
+                frontRightWheel.scale.set(0.04,0.04,0.04);
+                frontRightWheel.rotateY(-Math.PI * 0.5); // rotate 90 degrees on the Y axis
+                frontRightWheel.updateMatrix();
+                geom.merge(frontRightWheel.geometry, frontRightWheel.matrix);
+    
+                //texture
+                rearRightWheel = new THREE.Mesh(new THREE.TorusGeometry(2, 1, 12, 18),
+                new THREE.MeshLambertMaterial({
+                    map: wheelTexture
+                })); //color: 0xffffff
+                // position and attach wheel to vehicle body
+                rearRightWheel.position.y = wheelBasePosY;
+                rearRightWheel.position.x = 0.65-0.5;
+                rearRightWheel.position.z = 5;
+                //aigroup.add(rearRightWheel);
+                rearRightWheel.scale.set(0.04,0.04,0.04);
+                rearRightWheel.rotateY(-Math.PI * 0.5); // rotate 90 degrees on the Y axis
+                rearRightWheel.updateMatrix();
+                geom.merge(rearRightWheel.geometry, rearRightWheel.matrix);
+    
+                //texture
+                rearLeftWheel = new THREE.Mesh(new THREE.TorusGeometry(2, 1, 12, 18),
+                new THREE.MeshLambertMaterial({
+                    map: wheelTexture
+                }));
+                // position and attach wheel to vehicle body
+                rearLeftWheel.position.y = wheelBasePosY;
+                rearLeftWheel.position.x = 0.35 -0.5;
+                rearLeftWheel.position.z = 5;
+                aigroup.add(rearLeftWheel);
+                rearLeftWheel.scale.set(0.04,0.04,0.04);
+                rearLeftWheel.rotateY(-Math.PI * 0.5); // rotate 90 degrees on the Y axis
+                rearLeftWheel.updateMatrix();
+                geom.merge(rearLeftWheel.geometry, rearLeftWheel.matrix);
+    
+                vehicle = new THREE.Mesh(geom, new THREE.MeshPhongMaterial({ color: 0x303030 }), 0.1, 10);
+                aigroup.add(vehicle);
+                
+                // headlights
+                var sphere = new THREE.SphereBufferGeometry(0.5, 16, 8);
+    
+                leftHeadlight = new THREE.PointLight(0x000000, 2, 10);
+                leftHeadlight.add(new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({color: 0xfcfab3})));
+                leftHeadlight.scale.set(0.06,0.06,0.06);
+                leftHeadlight.position.y = wheelBasePosY+ 0.05;
+                leftHeadlight.position.x = 0.45-0.5;
+                leftHeadlight.position.z = 4.53;
+                leftHeadlight.castShadow = false;
+                aigroup.add(leftHeadlight);
+    
+                rightHeadlight = new THREE.PointLight(0x0000, 2, 10);
+                rightHeadlight.add(new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({color: 0xfcfab3})));
+                rightHeadlight.scale.set(0.06,0.06,0.06);
+                rightHeadlight.position.y = wheelBasePosY+ 0.05;
+                rightHeadlight.position.x = 0.55-0.5;
+                rightHeadlight.position.z = 4.53;
+                rightHeadlight.castShadow = false;
+                aigroup.add(rightHeadlight);
+    
+                // break lights
+                var cube = new THREE.BoxBufferGeometry(6, 4, 4);
+                // left
+                leftBreaklight = new THREE.PointLight(0xfd0303, 2, 2);
+                leftBreaklight.add(new THREE.Mesh(cube, new THREE.MeshBasicMaterial({color: 0xfd0303})));
+                leftBreaklight.scale.set(0.015,0.015,0.015);
+                leftBreaklight.position.y = wheelBasePosY+ 0.05;
+                leftBreaklight.position.x = 0.35 -0.42;
+                leftBreaklight.position.z = 5.05;
+                leftBreaklight.intensity = 0.5;
+                leftBreaklight.castShadow = false;
+                aigroup.add(leftBreaklight);
+                // right
+                rightBreaklight = new THREE.PointLight(0xfd0303, 2, 2);
+                rightBreaklight.add(new THREE.Mesh(cube, new THREE.MeshBasicMaterial({color: 0xfd0303})));
+                rightBreaklight.scale.set(0.015,0.015,0.015);
+                rightBreaklight.position.y = wheelBasePosY+ 0.05;
+                rightBreaklight.position.x = 0.35 -0.28;
+                rightBreaklight.position.z = 5.05;
+                rightBreaklight.intensity = 0.5;
+                rightBreaklight.castShadow = false;
+                aigroup.add(rightBreaklight);
+                aigroup.position.x = -1;
+                aigroup.position.z = 20;
+     
+                // aigroup.rotateZ(-Math.PI * 0.5); 
+                //aigroup.rotateX(-Math.PI * 0.5);
+    
+                scene.add(aigroup); // add vehicle group to scene
+    
+    
+    
+            }
+            function addWorld(){
+                //texture
+                var mapGroundTexture = new THREE.TextureLoader().load( "images/iceflats_dn.png" );
+	
+                var groundMat = new THREE.MeshPhongMaterial( { map: mapGroundTexture, color: 0xefefed ,overdraw:0.5} );
+	
+                mapGround = new THREE.Mesh(new THREE.PlaneGeometry(mapSize+6, mapSize+6, 1, 1, 1), groundMat);
+                mapGround.receiveShadow = true;
+                mapGround.castShadow=false;
+                mapGround.rotation.x=-Math.PI/2;
+    
+                mapGround.position.y=0; //-24
+                mapGround.position.z=0;
+                mapGround.position.x=0;
+ 
+                scene.add(mapGround);
+            }
+            // create the town walls with a 2D array
+            function createTownBuildings() {
+                // town walls -  1 = wall, 0 = empty
+    
+                var map = [
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0],
+                    [0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
+                    [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
+                    [0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
+                    [0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
+                    [0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
+                    [0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
+                    [0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                ];
+
+                // wall mesh
+                var cubeGeo = new THREE.BoxGeometry(buildingWidth, buildingHeight, buildingWidth);
+                var cubeMat = new THREE.MeshPhongMaterial({
+                    color: 0xaaaaaa
+                });
+
+                // keep cubes within town walls
+                var widthOffset = buildingWidth / 2;
+                // bottom of the cube will be at y = 0
+                var heightOffset = buildingHeight / 2;
+
+                // get width of map is by seeing how long the array is
+                totalCubesWide = map[0].length;
+                // only place walls where 1`s are
+                for (var i = 0; i < totalCubesWide; i++) {
+                    for (var j = 0; j < map[i].length; j++) {
+                        // add a cube at the corresponding position
+                        if (map[i][j]) {
+                            var cube = new THREE.Mesh(cubeGeo, cubeMat);
+                
+                            var tree = addTree();
+                
+                            // set position
+                            cube.position.z = (i - totalCubesWide / 2) * buildingWidth + widthOffset;
+                            tree.position.z = cube.position.z;
+                            cube.position.y = heightOffset;
+                            tree.position.y = 0;
+                            cube.position.x = (j - totalCubesWide / 2) * buildingWidth + widthOffset;
+                            tree.position.x = cube.position.x-2;
+                            cube.castShadow = true;
+                            cube.receiveShadow = true;
+                
+                            scene.add(cube); 
+                            scene.add(tree);
+                            //scene.add(streetlight);
+                            // collision detection
+                            collidingObjects.push(cube);
+                        }
+            
+                    }
+
+                }
+                // create the ground based on the map size the matrix/cube size produced
+                mapSize = totalCubesWide * buildingWidth;
+            }
+            
+            // make four town walls for each side of the town
+            function addTownWalls() {
+                var halfOfMap = mapSize / 2+1.6;
+                var sign = 1.02;               // positive or negative
+
+                // make town walls from for loop
+                for (var i = 0; i < 2; i++) {
+                    var geom = new THREE.PlaneGeometry(mapSize+5.4, 1.5);
+                    // double sided material
+                    var mat = new THREE.MeshPhongMaterial({ color: 0x464646, side: THREE.DoubleSide });
+                    // make two walls
+                    var townWallLeftAndRight = new THREE.Mesh(geom, mat);
+                    var townWallFrontAndBack = new THREE.Mesh(geom, mat);
+
+                    // create left/right walls
+                    townWallLeftAndRight.position.set(halfOfMap * sign, 1.5 / 2, 0);
+                    townWallLeftAndRight.rotation.y=-Math.PI/2;
+                    scene.add(townWallLeftAndRight);
+        
+                    collidingObjects.push(townWallLeftAndRight);
+                    // create front/back walls
+                    townWallFrontAndBack.position.set(0, 1.5 / 2, halfOfMap * sign);
+                    scene.add(townWallFrontAndBack);
+                    // add walls to collision array
+                    collidingObjects.push(townWallFrontAndBack);
+                    collidingObjects.push(townWallLeftAndRight);
+
+                    sign = -1.04; // change to negative value
+                }
+            }
+            function addLight() {
+                hemisphereLight = new THREE.HemisphereLight(0xfffafa,0x000000, .9);
+                scene.add(hemisphereLight);
+                sun = new THREE.DirectionalLight( 0xcdc1c5, 0.9);
+                sun.position.set( 12,7,-9 );
+                sun.castShadow = true;
+                scene.add(sun);
+                // set up shadow properties for the sun light
+                sun.shadow.mapSize.width = 256;
+                sun.shadow.mapSize.height = 256;
+                sun.shadow.camera.near = 0.5;
+                sun.shadow.camera.far = 50 ;
+            }
+
+            function addTree() {
+                var tiers=5;
+                var sides=7;
+                
+                var scalarMultiplier = (Math.random()*(0.24-0.05)) + 0.06;
+                var geom = new THREE.ConeGeometry( 0.5, 1, sides, tiers);
+                var treeMat = new THREE.MeshLambertMaterial({color: 0x486b3d});
+                midPointVector=geom.vertices[0].clone();
+                expandTreeMesh(geom.vertices, sides, 3, scalarMultiplier*1.2, true);
+                var top = new THREE.Mesh(geom, treeMat);
+                top.castShadow = true;
+                top.receiveShadow = false;
+                top.position.y = 0.9;
+                top.rotation.y = (Math.random()*(Math.PI));
+                var trunkGeom = new THREE.CylinderGeometry(0.1, 0.1, 0.5);
+                var trunkMat = new THREE.MeshLambertMaterial({color: 0x664d3c});
+                var trunk = new THREE.Mesh(trunkGeom, trunkMat);
+                trunk.position.y = 0.25;
+                var tree = new THREE.Object3D();
+                tree.add(trunk);
+                tree.add(top);
+                return tree;
+            }
+            function addPerimTree() {
+                var geom = new THREE.BoxGeometry(1, 1, 1);
+                var darkLeafMat = new THREE.MeshLambertMaterial({color: 0x4e7c3f});
+                var lightLeafMat = new THREE.MeshLambertMaterial({color: 0x63a050});
+                var trunkMat = new THREE.MeshLambertMaterial({color: 0x70553e});
+                
+                var trunk = new THREE.Mesh(geom, trunkMat);
+                trunk.position.set(0, 0, 0);
+                trunk.scale.set(0.3, 1.5, 0.3);
+
+                var squareLeaf1 = new THREE.Mesh(geom, darkLeafMat);
+                squareLeaf1.position.set(0.5, 1.6, 0.5);
+                squareLeaf1.scale.set(0.8, 0.8, 0.8);
+
+                var squareLeaf2 = new THREE.Mesh(geom, darkLeafMat);
+                squareLeaf2.position.set(-0.4, 1.3, -0.4);
+                squareLeaf2.scale.set(0.7, 0.7, 0.7);
+
+                var squareLeaf3 = new THREE.Mesh(geom, darkLeafMat);
+                squareLeaf3.position.set(0.4, 1.7, -0.5);
+                squareLeaf3.scale.set(0.7, 0.7, 0.7);
+
+                var darkLeaf = new THREE.Mesh(geom, darkLeafMat);
+                darkLeaf.position.set(0, 1.2, 0);
+                darkLeaf.scale.set(1, 2, 1);
+
+                var lightLeaf = new THREE.Mesh(geom, lightLeafMat);
+                lightLeaf.position.set(0, 1.2, 0);
+                lightLeaf.scale.set(1.1, 0.5, 1.1);
+
+                var perimTree = new THREE.Group();
+                perimTree.add(darkLeaf);
+                perimTree.add(lightLeaf);
+                perimTree.add(squareLeaf1);
+                perimTree.add(squareLeaf2);
+                perimTree.add(squareLeaf3);
+                perimTree.add(trunk);
+                
+                return perimTree;
+            }
+            
+            function addStreetLight() {  
+                // create material
+                var streetLightMaterial = new THREE.MeshLambertMaterial({color: 0x777777});
+                var streetLightMaterial1 = new THREE.MeshLambertMaterial({color: 0xaaaaaa});
+                var streetLightMaterial2 = new THREE.MeshLambertMaterial({color: 0xffffff, transparent: true, opacity: 0.5});
+                
+                // create mesh  
+                var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04,3), streetLightMaterial1);
+                pole.position.set(0, 0.01, 0);
+                
+                var pole2 = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05,0.5), streetLightMaterial);
+                pole2.position.set(0, 0.02, 0);
+                
+                var light = new THREE.Mesh(new THREE.CubeGeometry(0.5, 0.5,0.5), streetLightMaterial2);
+                light.position.set(0, 1.5, 0);
+                
+                var sphere = new THREE.SphereBufferGeometry(0.5, 0.5, 0.5);
+                var particle = new THREE.SpotLight(0xffffff, 2, 2);
+                particle.add(new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({color: 0xfcfab3})));
+                particle.position.set(0, 1.56, 0);
+                particle.scale.set(0.1, 0.1, 0.1);
+                
+                spotLight = new THREE.SpotLight(0xffffff, 1, 1000, Math.PI / 3, 1);
+                spotLight.position.set(0, 1.5, 0);
+                spotLight.target = pole;
+
+                spotLight.castShadow = true;  
+                
+                var perimStreetLight = new THREE.Object3D();
+                perimStreetLight.add(pole);
+                perimStreetLight.add(pole2);
+                perimStreetLight.add(light);
+                perimStreetLight.add(particle);
+                perimStreetLight.add(spotLight);
+	             
+                return perimStreetLight;
+            }
+                  
+            function expandTreeMesh(vertices, sides, tier, scalarMultiplier, odd) {
+                var vIndex;
+                var vVector = new THREE.Vector3();
+                var midPointVector = vertices[0].clone(); // duplicate vertices to midPointVector variable
+                var offset;
+                for (var i = 0; i < sides; i++) {
+                    vIndex = (tier * sides) + 2;
+                    vVector = vertices[i + vIndex].clone();
+                    midPointVector.y = vVector.y;
+                    offset = vVector.sub(midPointVector);
+                    if (odd) {
+                        if (i % 3 === 0) { // remainder
+                            offset.normalize().multiplyScalar(scalarMultiplier/5);
+                            vertices[i + vIndex].add(offset);
+                        }else {
+                            offset.normalize().multiplyScalar(scalarMultiplier);
+                            vertices[i + vIndex].add(offset);
+                            vertices[i + vIndex].y = vertices[i+vIndex+sides].y + 0.06;
+                        }
+                    }else {
+                        if (i % 3 !== 0) { 
+                            offset.normalize().multiplyScalar(scalarMultiplier/5);
+                            vertices[i + vIndex].add(offset);
+                        }else {
+                            offset.normalize().multiplyScalar(scalarMultiplier);
+                            vertices[i + vIndex].add(offset);
+                            vertices[i + vIndex].y = vertices[i+vIndex+sides].y + 0.06;
+                        }
+                    }
+                }
+            }
+
+            function update() {
+                stats.update();
+                updateCamera(); 
+                // weather
+                snowParticleSystem.rotation.x -= 0.0015;
+                snowParticleSystem.rotation.y += 0.00199; // rotate snow particles on both x and y axis
+                rainParticleSystem.rotation.y += 0.0015; // rotate rain particles only on the y axis to simulate the real thing.
+                simulateWeather();
+    
+                // bounce the sphere off the wall
+                // if (Math.abs(aigroup.position) < mapGround.position) {
+                //  aigroup.translateZ( -0.070 );
+                // }
+                //  if (Math.abs(aigroup.position) > mapSize) {
+                //aigroup.translateZ = +aigroup.translateZ;
+                // }
+
+                if (checkAITruckCollision() === true) {
+                    var directionMultiples = [1, 0, 1];
+                    var randomIndex = getRandomIntWithinRange(0, 2);
+                    var randomDirection = convertDegreesToRadians(90 * directionMultiples[randomIndex]);
+
+                    // add new direction to the AI vehicle
+                    aigroup.rotation.y += randomDirection;
+                } else {
+                    aigroup.translateZ(-0.04);
+                }
+                   
+                renderer.clear();
+                render();
+                requestAnimationFrame(update); // request update
+            }
+
+            function render(){
+                renderer.render(scene, camera);
+            }
+            // determine if ai truck is colliding with a collidable object from the array - not working well
+            function checkAITruckCollision() {
+                // rotation matrix
+                var matrix = new THREE.Matrix4();
+                matrix.extractRotation(aigroup.matrix);
+                // direction vector
+                var directionFront = new THREE.Vector3(0, 0, 1);
+
+                // vectors from the front of the ai truck
+                directionFront.applyMatrix4(matrix);
+
+                var rayCastFront = new THREE.Raycaster(aigroup.position, directionFront);
+
+                // return true if collision
+                if (rayIntersect(rayCastFront, aigroupCollisionDistance))
+                    return true;
+                else
+                    return false;
+
+            }   
+            // generate a random integer within a range
+            function getRandomIntWithinRange(min, max) {
+                min = Math.ceil(min);
+                max = Math.floor(max);
+                return Math.floor(Math.random() * (max - min)) + min;
+            }
+
+            function onWindowResize() {
+                //resize and align
+                sceneHeight = window.innerHeight;
+                sceneWidth = window.innerWidth;
+                renderer.setSize(sceneWidth, sceneHeight);
+                camera.aspect = sceneWidth/sceneHeight;
+                camera.updateProjectionMatrix();
+            }
+            function initStats() {
+        
+                var stats = new Stats();
+        
+                stats.setMode(0); // 0: fps, 1: ms
+        
+                stats.domElement.style.position = 'absolute';
+                stats.domElement.style.bottom = '0px';
+                stats.domElement.style.top = '650px';
+                stats.domElement.style.left = '10px';
+        
+                dom = document.getElementById('Stats-output');
+                dom.appendChild(stats.dom);
+        
+                return stats;
+            }
+            
+            // convert radians to degrees
+            function convertRadiansToDegrees(radians) {
+                return radians * 180 / Math.PI;
+            }
+            
+            // convert degrees to radians
+            function convertDegreesToRadians(degrees) {
+                return degrees * Math.PI / 180;
+            }
+
+            function getRandom() { // get a random number
+                var num = Math.floor(Math.random()*10) + 1;
+                num *= Math.floor(Math.random()*2) === 1 ? 1 : -1;
+                return num;
+            }
+        </script>    
+    </body>
+</html>
